@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 VERSION = '0.0.1' 
 DESCRIPTION = 'BIRD-GP'
-LONG_DESCRIPTION = 'A package for the model Bayesian Image-on-image Regression via Deep kernel learning based Gaussian Processes (BIRD-GP) model'
+LONG_DESCRIPTION = 'A package for the Bayesian Image-on-image Regression via Deep kernel learning based Gaussian Processes (BIRD-GP) model'
 
 setup(
         name = "bird_gp", 
