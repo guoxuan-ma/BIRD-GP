@@ -63,8 +63,6 @@ class BIRD_GP:
         the batch size when training the Bayeian neural network by SVGD
     svgd_epochs : int
         the number of epochs when training the Bayeian neural network by SVGD
-    device : string
-        the device on which basis coefficients are fitted
     Psi_predictors : 2d array
         the fitted basis functions for predictors; of size V_in * L_in
     Psi_outcomes : 2d array
@@ -120,7 +118,6 @@ class BIRD_GP:
                  svgd_b_lambda = 1, 
                  svgd_batch_size = 64, 
                  svgd_epochs = 30,
-                 device = None
                  ):
         '''
         initialization
@@ -169,8 +166,6 @@ class BIRD_GP:
             the batch size when training the Bayeian neural network by SVGD
         svgd_epochs : int
             the number of epochs when training the Bayeian neural network by SVGD
-        device : string
-            the device on which basis coefficients are fitted
         '''
 
         self.grids_in = predictor_grids
@@ -201,8 +196,6 @@ class BIRD_GP:
         self.svgd_b_lambda = svgd_b_lambda
         self.svgd_batch_size = svgd_batch_size
         self.svgd_epochs = svgd_epochs
-        
-        self.device = device
     
 
     def fit(self, predictors, outcomes):
@@ -421,7 +414,6 @@ class BIRD_GP:
                              A_tau = hs_lm_A_tau, 
                              A_lambda = hs_lm_A_lambda,
                              progression_bar = False,
-                             device = self.device, 
                              track_loglik = False)
         
         theta = np.zeros((n, L))
