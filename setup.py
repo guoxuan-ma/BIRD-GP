@@ -21,5 +21,5 @@ setup(
             "Operating System :: MacOS :: MacOS X",
             "Operating System :: Microsoft :: Windows",
         ],
-        url = 
+        url = "https://github.com/graysonma/2022_BIRD_GP"
 )
