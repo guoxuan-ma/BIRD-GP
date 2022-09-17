@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-import bfnn
-from fastBayesReg import FastHorseshoeLM
-import svgd
+import bird_gp.bfnn
+from bird_gp.fastBayesReg import FastHorseshoeLM
+import bird_gp.svgd
 from tqdm import tqdm
 import itertools
 
