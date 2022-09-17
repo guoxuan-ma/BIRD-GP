@@ -257,15 +257,15 @@ class BIRD_GP:
                                                           self.hs_lm_A_lambda
                                                          )
         print("stein variation gradient descent ...")
-        self.svgd_nn = svgd.svgd_bnn(X_train = self.theta_train_predictors, 
-                                     y_train = self.theta_train_outcomes,
-                                     a_gamma = self.svgd_a_gamma, 
-                                     b_gamma = self.svgd_b_gamma, 
-                                     a_lambda = self.svgd_a_lambda,
-                                     b_lambda = self.svgd_b_lambda, 
-                                     batch_size = self.svgd_batch_size, 
-                                     epochs = self.svgd_epochs
-                                    )
+        self.svgd_nn = bird_gp.svgd.svgd_bnn(X_train = self.theta_train_predictors, 
+                                             y_train = self.theta_train_outcomes,
+                                             a_gamma = self.svgd_a_gamma, 
+                                             b_gamma = self.svgd_b_gamma, 
+                                             a_lambda = self.svgd_a_lambda,
+                                             b_lambda = self.svgd_b_lambda, 
+                                             batch_size = self.svgd_batch_size, 
+                                             epochs = self.svgd_epochs
+                                            )
         self.svgd_nn.train()
     
     
@@ -362,7 +362,7 @@ class BIRD_GP:
         d = grids.shape[1]
         grids = torch.tensor(grids, dtype = torch.float32)
         images = torch.tensor(images, dtype = torch.float32)
-        bfnn_model = bfnn.BFNN(d = d, L = L, n = n, V = V)
+        bfnn_model = bird_gp.bfnn.BFNN(d = d, L = L, n = n, V = V)
         bf_optimizer = torch.optim.Adam(bfnn_model.parameters(), lr = lr)
         mse_criterion = torch.nn.MSELoss()
         iterator = tqdm(range(steps))        
