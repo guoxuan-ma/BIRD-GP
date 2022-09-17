@@ -5,7 +5,7 @@ DESCRIPTION = 'BIRD-GP'
 LONG_DESCRIPTION = 'A package for the model Bayesian Image-on-image Regression via Deep kernel learning based Gaussian Processes (BIRD-GP) model'
 
 setup(
-        name = "BIRD-GP", 
+        name = "bird_gp", 
         version = VERSION,
         author = "Guoxuan Ma",
         author_email = "<gxma@umich.com>",
