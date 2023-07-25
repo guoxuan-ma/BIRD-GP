@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-import bird_gp.bfnn
-from bird_gp.fastBayesReg import FastHorseshoeLM
-import bird_gp.svgd
+import bfnn
+from fastBayesReg import FastHorseshoeLM
+import svgd
 from tqdm import tqdm
 import itertools
 
@@ -44,13 +44,13 @@ class BIRD_GP:
     hs_lm_thinning : int
         the thining parameters in the horseshoe-prior linear regression fitting the basis coefficients; shared by fitting both predictors and outcomes
     hs_lm_a_sigma : double
-        the shape parameter of the inverse gamma prior of the noise variance in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+        to do
     hs_lm_b_sigma : double
-        the rate parameter of the inverse gamma prior of the noise variance in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+        to do
     hs_lm_A_tau : double
-        the scale parameter of the half Cauchy prior of the global shrinkage parameter in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+        to do
     hs_lm_A_lambda : double
-        the scale parameter of the half Cauchy prior of the local shrinkage parameter in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+        to do
     svgd_a_gamma : double
         the shape parameter in the gamma prior for the i.i.d. errors precision (gamma) in the Bayeian neural network
     svgd_b_gamma : double
@@ -63,6 +63,8 @@ class BIRD_GP:
         the batch size when training the Bayeian neural network by SVGD
     svgd_epochs : int
         the number of epochs when training the Bayeian neural network by SVGD
+    device : string
+        the device on which basis coefficients are fitted
     Psi_predictors : 2d array
         the fitted basis functions for predictors; of size V_in * L_in
     Psi_outcomes : 2d array
@@ -112,13 +114,15 @@ class BIRD_GP:
                  hs_lm_b_sigma = 0, 
                  hs_lm_A_tau = 1, 
                  hs_lm_A_lambda = 1,
+                 svgd_num_particles = 20,
                  svgd_a_gamma = 1, 
                  svgd_b_gamma = 1, 
                  svgd_a_lambda = 1, 
                  svgd_b_lambda = 1, 
                  svgd_batch_size = 64, 
                  svgd_epochs = 30,
-                 ):
+                 device = None,
+                 disable_message = True):
         '''
         initialization
 
@@ -147,13 +151,13 @@ class BIRD_GP:
         hs_lm_thinning : int
             the thining parameters in the horseshoe-prior linear regression fitting the basis coefficients; shared by fitting both predictors and outcomes
         hs_lm_a_sigma : double
-            the shape parameter of the inverse gamma prior of the noise variance in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+            to do
         hs_lm_b_sigma : double
-            the rate parameter of the inverse gamma prior of the noise variance in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+            to do
         hs_lm_A_tau : double
-            the scale parameter of the half Cauchy prior of the global shrinkage parameter in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+            to do
         hs_lm_A_lambda : double
-        the scale parameter of the half Cauchy prior of the local shrinkage parameter in the horseshoe-prior linear regression; shared by fitting both predictors and outcomes
+            to do
         svgd_a_gamma : double
             the shape parameter in the gamma prior for the i.i.d. errors precision (gamma) in the Bayeian neural network
         svgd_b_gamma : double
@@ -166,6 +170,8 @@ class BIRD_GP:
             the batch size when training the Bayeian neural network by SVGD
         svgd_epochs : int
             the number of epochs when training the Bayeian neural network by SVGD
+        device : string
+            the device on which basis coefficients are fitted
         '''
 
         self.grids_in = predictor_grids
@@ -189,13 +195,17 @@ class BIRD_GP:
         self.hs_lm_b_sigma = hs_lm_b_sigma 
         self.hs_lm_A_tau = hs_lm_A_tau
         self.hs_lm_A_lambda = hs_lm_A_lambda
-
+        
+        self.svgd_num_particles = svgd_num_particles
         self.svgd_a_gamma = svgd_a_gamma
         self.svgd_b_gamma = svgd_b_gamma
         self.svgd_a_lambda = svgd_a_lambda
         self.svgd_b_lambda = svgd_b_lambda
         self.svgd_batch_size = svgd_batch_size
         self.svgd_epochs = svgd_epochs
+        
+        self.disable_message = disable_message
+        self.device = device
     
 
     def fit(self, predictors, outcomes):
@@ -209,60 +219,72 @@ class BIRD_GP:
         outcomes : 2d array
             outcome images; of size n_train * V_out
         '''
-
+        self.train_outcomes = outcomes
+        
         print("fit basis for predictors ...")
-        Psi_predictors = self.fit_basis(self.grids_in, 
-                                        predictors, 
-                                        self.bf_predictor_lr, 
-                                        self.bf_predictor_steps,
-                                        self.L_in
-                                       )
-        print("fit basis for outcomes ...")
-        Psi_outcomes = self.fit_basis(self.grids_out, 
-                                      outcomes, 
-                                      self.bf_outcome_lr, 
-                                      self.bf_outcome_steps,
-                                      self.L_out
-                                     )
-        print("basis orthogonalization ...")
+        Psi_predictors, _, _ = self.fit_basis(self.grids_in, 
+                                              predictors, 
+                                              self.bf_predictor_lr, 
+                                              self.bf_predictor_steps,
+                                              self.L_in
+                                              )
         self.Psi_predictors, _, _ = self.orthogonalization(Psi_predictors)
-        self.Psi_outcomes, _, _ = self.orthogonalization(Psi_outcomes)
-        print("fit basis coefficients for predictors ...")
-        self.theta_train_predictors = self.fit_coefficients(predictors, 
-                                                            self.Psi_predictors, 
-                                                            self.hs_lm_mcmc_burnin,
-                                                            self.hs_lm_mcmc_samples,
-                                                            self.hs_lm_thinning,
-                                                            self.hs_lm_a_sigma,
-                                                            self.hs_lm_b_sigma,
-                                                            self.hs_lm_A_tau,
-                                                            self.hs_lm_A_lambda
-                                                           )
-        print("fit basis coefficients for outcomes ...")
-        self.theta_train_outcomes = self.fit_coefficients(outcomes, 
-                                                          self.Psi_outcomes, 
-                                                          self.hs_lm_mcmc_burnin,
-                                                          self.hs_lm_mcmc_samples,
-                                                          self.hs_lm_thinning,
-                                                          self.hs_lm_a_sigma,
-                                                          self.hs_lm_b_sigma,
-                                                          self.hs_lm_A_tau,
-                                                          self.hs_lm_A_lambda
-                                                         )
-        print("stein variation gradient descent ...")
-        self.svgd_nn = bird_gp.svgd.svgd_bnn(X_train = self.theta_train_predictors, 
-                                             y_train = self.theta_train_outcomes,
-                                             a_gamma = self.svgd_a_gamma, 
-                                             b_gamma = self.svgd_b_gamma, 
-                                             a_lambda = self.svgd_a_lambda,
-                                             b_lambda = self.svgd_b_lambda, 
-                                             batch_size = self.svgd_batch_size, 
-                                             epochs = self.svgd_epochs
+        
+        
+        print("fit basis for outcomes ...")
+        Psi_outcomes, _, _ = self.fit_basis(self.grids_out, 
+                                            outcomes, 
+                                            self.bf_outcome_lr, 
+                                            self.bf_outcome_steps,
+                                            self.L_out
                                             )
+        self.Psi_outcomes, singular_values_outcomes, _ = self.orthogonalization(Psi_outcomes)
+        
+        
+        self.Psi_predictors = np.hstack((np.ones((self.Psi_predictors.shape[0], 1)), self.Psi_predictors))
+        self.Psi_outcomes = np.hstack((np.ones((self.Psi_outcomes.shape[0], 1)), self.Psi_outcomes))
+        print("fit basis coefficients for predictors ...")
+        self.theta_train_predictors, _ = self.fit_coefficients(predictors, 
+                                                               self.Psi_predictors, 
+                                                               self.hs_lm_mcmc_burnin,
+                                                               self.hs_lm_mcmc_samples,
+                                                               self.hs_lm_thinning,
+                                                               self.hs_lm_a_sigma,
+                                                               self.hs_lm_b_sigma,
+                                                               self.hs_lm_A_tau,
+                                                               self.hs_lm_A_lambda
+                                                               )
+        print("fit basis coefficients for outcomes ...")
+        self.theta_train_outcomes, self.sigma2_ytrain = self.fit_coefficients(outcomes, 
+                                                                              self.Psi_outcomes, 
+                                                                              self.hs_lm_mcmc_burnin,
+                                                                              self.hs_lm_mcmc_samples,
+                                                                              self.hs_lm_thinning,
+                                                                              self.hs_lm_a_sigma,
+                                                                              self.hs_lm_b_sigma,
+                                                                              self.hs_lm_A_tau,
+                                                                              self.hs_lm_A_lambda
+                                                                              )
+        
+        #self.eigen_values_outcomes = singular_values_outcomes ** 2
+        self.empirical_eigen_values_outcomes = np.var(self.theta_train_outcomes, 0)
+        print("stein variation gradient descent ...")
+        self.svgd_nn = svgd.svgd_bnn(X_train = self.theta_train_predictors, 
+                                     y_train = self.theta_train_outcomes,
+                                     #var_vec_y = self.empirical_eigen_values_outcomes,
+                                     var_vec_y = np.ones(self.empirical_eigen_values_outcomes.shape[0]),
+                                     a_gamma = self.svgd_a_gamma, 
+                                     b_gamma = self.svgd_b_gamma, 
+                                     a_lambda = self.svgd_a_lambda,
+                                     b_lambda = self.svgd_b_lambda, 
+                                     batch_size = self.svgd_batch_size, 
+                                     epochs = self.svgd_epochs,
+                                     M = self.svgd_num_particles,
+                                    )
         self.svgd_nn.train()
     
     
-    def predict_train(self):
+    def predict_train(self, sample = False, size = 1000, CI = 0.95):
         '''
         make prediction of outcomes on training data after fitting the model
 
@@ -285,12 +307,41 @@ class BIRD_GP:
         one_side_prob = (1 - CI) / 2
         self.lower_boundary = np.quantile(self.train_outcomes_samples, one_side_prob, axis = 0)
         self.upper_boundary = np.quantile(self.train_outcomes_samples, 1 - one_side_prob, axis = 0)
-        '''
+        ''' 
         
-        return(self.train_outcomes_pred)
+        if sample:
+            n_train = self.theta_train_outcomes_pred.shape[0]
+            coverage_rates = np.zeros(n_train)
+            print("sampling training images")
+            for i in tqdm(range(n_train), disable = self.disable_message):
+                eigen_values_outcomes = self.empirical_eigen_values_outcomes#np.square(np.std(self.theta_train_outcomes, 0))
+                samples = self.sample_images_for_one_input_image(size, 
+                                                                 self.theta_train_predictors[i, :], 
+                                                                 eigen_values_outcomes, 
+                                                                 self.sigma2_ytrain[i])
+                coverage_rates[i] = self.coverage_rate_for_one_input_image(CI, samples, self.train_outcomes[i, :])
+            self.train_coverage_rates = coverage_rates
+            return(self.train_outcomes_pred, self.train_coverage_rates)
+        else:
+            return(self.train_outcomes_pred)
+        
+        
+    def predict_test_lr(self, test_predictors, test_confounders = None):    
+        from sklearn.linear_model import LinearRegression
+        self.test_predictors = test_predictors
+        n_test = self.test_predictors.shape[0]
+        self.theta_test_predictors = np.zeros((n_test, self.Psi_predictors.shape[1]))
+        for i in range(n_test):
+            lm = LinearRegression(fit_intercept = False).fit(self.Psi_predictors, self.test_predictors[i, :])
+            self.theta_test_predictors[i, :] = lm.coef_
+        if test_confounders is not None:
+            self.theta_test_predictors = np.hstack((self.theta_test_predictors, test_confounders))
+        self.theta_test_outcomes_pred, self.theta_test_outcomes_samples = self.svgd_nn.predict(self.theta_test_predictors)
+        self.test_outcomes_pred = self.theta_test_outcomes_pred @ self.Psi_outcomes.T
+        return self.test_outcomes_pred
     
     
-    def predict_test(self, test_predictors):
+    def predict_test(self, test_predictors, sample = False, test_outcomes = None, size = 1000, CI = 0.95):
         '''
         make prediction of outcomes on testing data after fitting the model
 
@@ -298,19 +349,19 @@ class BIRD_GP:
         ------
         an 2d array of size n_test * V_out containing the predicted outcome images in the testing set
         '''
-
-        theta_test_predictors = self.fit_coefficients(test_predictors, 
-                                                      self.Psi_predictors, 
-                                                      self.hs_lm_mcmc_burnin,
-                                                      self.hs_lm_mcmc_samples,
-                                                      self.hs_lm_thinning,
-                                                      self.hs_lm_a_sigma,
-                                                      self.hs_lm_b_sigma,
-                                                      self.hs_lm_A_tau,
-                                                      self.hs_lm_A_lambda
-                                                     )
-        theta_test_outcomes_pred, theta_test_outcomes_samples = self.svgd_nn.predict(theta_test_predictors)
-        test_outcomes_pred = theta_test_outcomes_pred @ self.Psi_outcomes.T
+        self.test_predictors = test_predictors
+        self.theta_test_predictors, _ = self.fit_coefficients(self.test_predictors, 
+                                                              self.Psi_predictors, 
+                                                              self.hs_lm_mcmc_burnin,
+                                                              self.hs_lm_mcmc_samples,
+                                                              self.hs_lm_thinning,
+                                                              self.hs_lm_a_sigma,
+                                                              self.hs_lm_b_sigma,
+                                                              self.hs_lm_A_tau,
+                                                              self.hs_lm_A_lambda
+                                                              )
+        self.theta_test_outcomes_pred, self.theta_test_outcomes_samples = self.svgd_nn.predict(self.theta_test_predictors)
+        self.test_outcomes_pred = self.theta_test_outcomes_pred @ self.Psi_outcomes.T
         
         '''
         M = theta_test_outcomes_samples.shape[0]
@@ -324,8 +375,21 @@ class BIRD_GP:
         lb = np.quantile(test_outcomes_samples, one_side_prob, axis = 0)
         ub = np.quantile(test_outcomes_samples, 1 - one_side_prob, axis = 0)
         '''
-        
-        return(test_outcomes_pred)
+        if sample:
+            n_test = test_predictors.shape[0]
+            coverage_rates = np.zeros(n_test)
+            print("sampling testing images")
+            for i in tqdm(range(n_test), disable = self.disable_message):
+                eigen_values_outcomes = self.empirical_eigen_values_outcomes #np.square(np.std(self.theta_train_outcomes, 0))
+                samples = self.sample_images_for_one_input_image(size, 
+                                                                 self.theta_test_predictors[i, :], 
+                                                                 eigen_values_outcomes, 
+                                                                 np.mean(self.sigma2_ytrain))
+                coverage_rates[i] = self.coverage_rate_for_one_input_image(CI, samples, test_outcomes[i, :])
+            self.test_coverage_rates = coverage_rates
+            return(self.test_outcomes_pred, self.test_coverage_rates)
+        else:
+            return(self.test_outcomes_pred)
         
     
     def fit_basis(self, grids, images, lr, steps, L):
@@ -349,23 +413,34 @@ class BIRD_GP:
         ------
         a 2d array of size V * L containing the fitted basis functions
         '''
-
+        total_variance = np.var(images, 0)
+        defined = (total_variance != 0)
+        total_variance = total_variance[defined]
+        
         n = images.shape[0]
         V = grids.shape[0]
         d = grids.shape[1]
-        grids = torch.tensor(grids, dtype = torch.float32)
-        images = torch.tensor(images, dtype = torch.float32)
-        bfnn_model = bird_gp.bfnn.BFNN(d = d, L = L, n = n, V = V)
+        grids = torch.tensor(grids, dtype = torch.float32).to(self.device)
+        images = torch.tensor(images, dtype = torch.float32).to(self.device)
+        bfnn_model = bfnn.BFNN(d = d, L = L, n = n, V = V).to(self.device)
         bf_optimizer = torch.optim.Adam(bfnn_model.parameters(), lr = lr)
         mse_criterion = torch.nn.MSELoss()
-        iterator = tqdm(range(steps))        
-        for _ in iterator:
+        iterator = tqdm(range(steps), disable = self.disable_message)
+        mse_trace = np.empty(0)
+        r2_trace = np.empty(0)
+        for i in iterator:
             yhat = bfnn_model.forward(grids)
             loss = mse_criterion(yhat, images)
             bf_optimizer.zero_grad()
             loss.backward()
             bf_optimizer.step()
-        return(bfnn_model.Psi.detach().numpy())
+            if i % 50 == 0:
+                mse_trace = np.concatenate((mse_trace, [loss.detach().to("cpu").numpy()]))
+                
+                mse = np.mean((yhat.detach().to("cpu").numpy() - images.detach().to("cpu").numpy()) ** 2, 0)
+                mse = mse[defined]
+                r2_trace = np.concatenate((r2_trace, [np.mean(1 - mse / total_variance)]))
+        return(bfnn_model.Psi.detach().to("cpu").numpy(), mse_trace, r2_trace)
     
     
     def fit_coefficients(self, 
@@ -389,19 +464,19 @@ class BIRD_GP:
         Psi : 2d array
             the fitted basis functions; of size V * L
         hs_lm_mcmc_burnin : int
-            the number of burin samples in the horseshoe-prior linear regression fitting the basis coefficients
+            the number of burin samples in the horseshoe-prior linear regression fitting the basis coefficients; shared by fitting both predictors and outcomes
         hs_lm_mcmc_samples : int
-            the number of mcmc samples for estimation in the horseshoe-prior linear regression fitting the basis coefficients
+            the number of mcmc samples for estimation in the horseshoe-prior linear regression fitting the basis coefficients; shared by fitting both predictors and outcomes
         hs_lm_thinning : int
-            the thining parameters in the horseshoe-prior linear regression fitting the basis coefficients
+            the thining parameters in the horseshoe-prior linear regression fitting the basis coefficients; shared by fitting both predictors and outcomes
         hs_lm_a_sigma : double
-            the shape parameter of the inverse gamma prior of the noise variance in the horseshoe-prior linear regression
+            to do
         hs_lm_b_sigma : double
-            the rate parameter of the inverse gamma prior of the noise variance in the horseshoe-prior linear regression
+            to do
         hs_lm_A_tau : double
-            the scale parameter of the half Cauchy prior of the global shrinkage parameter in the horseshoe-prior linear regression
+            to do
         hs_lm_A_lambda : double
-            the scale parameter of the half Cauchy prior of the local shrinkage parameter in the horseshoe-prior linear regression
+            to do
         '''
         
         n = images.shape[0]
@@ -417,12 +492,14 @@ class BIRD_GP:
                              track_loglik = False)
         
         theta = np.zeros((n, L))
-        iterator = tqdm(range(n))
+        sigma2 = np.zeros(n)
+        iterator = tqdm(range(n), disable = self.disable_message)
         for i in iterator:
             lm.fit(Psi, images[i, :])
             theta[i, :] = lm.coef_
-                
-        return(theta)
+            sigma2[i] = lm.posterior_mean("sigma2")
+            
+        return(theta, sigma2)
     
     
     def orthogonalization(self, Psi):
@@ -440,8 +517,34 @@ class BIRD_GP:
         '''
 
         return(np.linalg.svd(Psi, full_matrices = False))
-
+        
+        
+    def sample_images_for_one_input_image(self, size, theta_predictor, eigen_values_outcomes, sigma2):
+        mean_theta_outcome, _ = self.svgd_nn.predict(theta_predictor.reshape(1, -1))
+        outcome_image_samples = np.zeros((size, self.V_out))
+        for s in range(size):
+            pos_gamma = np.exp(np.mean(self.svgd_nn.loggamma))
+            theta_outcome_sample = np.random.normal(loc = mean_theta_outcome, scale = np.sqrt(eigen_values_outcomes / pos_gamma))
+            mean_outcome_image = (theta_outcome_sample @ self.Psi_outcomes.T).reshape(-1)
+            outcome_image_samples[s, :] = np.random.normal(loc = mean_outcome_image, scale = np.sqrt(sigma2))
+        return(outcome_image_samples)
     
+    
+    def coverage_rate_for_one_input_image(self, CI, outcome_image_samples, outcome_image):
+        one_side_prob = (1 - CI) / 2
+        lb = np.quantile(outcome_image_samples, one_side_prob, axis = 0)
+        ub = np.quantile(outcome_image_samples, 1 - one_side_prob, axis = 0)
+        coverage_rate = np.mean((lb < outcome_image) * (ub > outcome_image))
+        return(coverage_rate)
+    
+    
+    def evaluate_basis_fit(self, predictors, outcomes):
+        fitted_predictors = self.theta_train_predictors @ self.Psi_predictors.T
+        fitted_outcomes = self.theta_test_predictors @ self.Psi_outcomes.T
+        mse_predictors = np.mean((predictors - fitted_predictors) ** 2)
+        mse_outcomes = np.mean((outcomes - fitted_outcomes) ** 2)
+        return(mse_predictors, mse_predictors)
+        
     '''
     def generate_2d_grids(self, dims):
         dy = dims[0]

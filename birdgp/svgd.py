@@ -18,25 +18,45 @@ class Dataset(torch.utils.data.Dataset):
         y = self.labels[index, :]
         return X, y
     
-
+    
 class NeuralNetwork(nn.Module):
     def __init__(self, in_dim, out_dim):
         super().__init__()
+        '''
         self.body = nn.Sequential(
-            nn.Linear(in_dim, 200), 
+            nn.Linear(in_dim, 1024), 
             nn.ReLU(),
-            nn.Linear(200, out_dim)
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, out_dim)
         )
+        '''
+        self.body = nn.Sequential(
+            nn.Linear(in_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256), 
+            nn.ReLU(),
+            nn.Linear(256, out_dim)
+        )
+        '''
+        self.body = nn.Sequential(
+            nn.Linear(in_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, out_dim)
+        )
+        '''
 
     def forward(self, x):
         y = self.body(x)
         return y
 
-
 class svgd_bnn:
   def __init__(self, 
                X_train, 
                y_train, 
+               var_vec_y,
                X_dev = None, 
                y_dev = None, 
                M = 20, 
@@ -74,6 +94,10 @@ class svgd_bnn:
     self.mean_X_train = np.mean(X_train, 0)
     self.mean_y_train = np.mean(y_train, 0)
     self.std_y_train = np.std(y_train, 0)
+    
+    self.var_y_prod = np.prod(var_vec_y)
+    self.inv_var_mat_y = np.diag(1 / var_vec_y)
+    self.inv_var_mat_y = torch.tensor(self.inv_var_mat_y, dtype = torch.float32)
 
     self.dev = False
     if X_dev is not None:
@@ -81,6 +105,12 @@ class svgd_bnn:
       self.dev = True
     if y_dev is not None:
       self.y_dev = y_dev
+      
+    # initilization
+    for i in range(self.M):
+      self.nn = NeuralNetwork(self.p_in, self.p_out)
+      loggamma, loglambda = self.init_var()
+      self.theta[i, :] = self.pack_weights(loggamma, loglambda)
 
 
   def train(self):
@@ -90,12 +120,6 @@ class svgd_bnn:
     y_train = torch.tensor(y_train, dtype = torch.float32)
     dataset = Dataset(X_train, y_train)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size = self.batch_size, shuffle = True)
-
-    # initilization
-    for i in range(self.M):
-      self.nn = NeuralNetwork(self.p_in, self.p_out)
-      loggamma, loglambda = self.init_var()
-      self.theta[i, :] = self.pack_weights(loggamma, loglambda)
     
     # training
     grad_theta = np.zeros((self.M, self.num_vars))
@@ -147,7 +171,8 @@ class svgd_bnn:
     if self.dev:
       plt.plot(val_r2_list)
     plt.show()
-
+    
+    self.loggamma = self.theta[:, -2]
 
 
   def init_var(self):
@@ -211,10 +236,13 @@ class svgd_bnn:
     for p in self.nn.parameters():
       sum_of_squares = sum_of_squares + torch.sum(torch.square(p))
     
-
-    log_lik_data = -0.5 * self.batch_size * (np.log(2 * np.pi) - log_gamma) - (torch.exp(log_gamma) / 2) * torch.sum(torch.square(yhat - y_batch))
+    diff = yhat - y_batch
+    #log_lik_data = -0.5 * self.p_out * self.batch_size * (np.log(2 * np.pi) - log_gamma) - (torch.exp(log_gamma) / 2) * torch.sum(torch.square(yhat - y_batch))
+    log_lik_data = - 0.5 * self.p_out * self.batch_size * (np.log(2 * np.pi) - log_gamma) \
+                   - 0.5 * self.batch_size * np.log(self.var_y_prod) \
+                   - 0.5 * torch.exp(log_gamma) * torch.trace(diff @ self.inv_var_mat_y @ diff.T)
     log_prior_data = (self.a_gamma - 1) * log_gamma - self.b_gamma * torch.exp(log_gamma) + log_gamma
-    log_prior_w = -0.5 * (self.num_vars - 4) * (np.log(2 * np.pi) - log_lambda) - (torch.exp(log_lambda) / 2) * sum_of_squares  \
+    log_prior_w = - 0.5 * (self.num_vars - 2) * (np.log(2 * np.pi) - log_lambda) - (torch.exp(log_lambda) / 2) * sum_of_squares  \
                     + (self.a_lambda - 1) * log_lambda - self.b_lambda * torch.exp(log_lambda) + log_lambda
     log_posterior = (log_lik_data * self.n / self.batch_size + log_prior_data + log_prior_w)
 
